@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTP Login - Budget Access</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; overflow: hidden; }
+        #otpModal { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0,0,0,0.9); 
+            z-index: 9999; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+        }
+        #otpForm { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 8px; 
+            text-align: center; 
+            min-width: 350px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        h1 { color: #333; margin-bottom: 10px; }
+        h2 { color: #666; margin-bottom: 25px; font-size: 18px; }
+        input { 
+            width: 90%; 
+            padding: 12px; 
+            margin: 8px 0; 
+            border: 2px solid #ddd; 
+            border-radius: 5px; 
+            font-size: 16px;
+        }
+        input:focus { border-color: #007bff; outline: none; }
+        button { 
+            background: #007bff; 
+            color: white; 
+            padding: 12px 30px; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            font-size: 16px;
+            margin-top: 15px;
+            width: 95%;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #error { color: #dc3545; margin: 15px 0; font-weight: bold; }
+        #success { color: #28a745; margin: 15px 0; font-weight: bold; }
+        #budContent { display: none; width: 100%; height: 100vh; border: none; }
+        .loading { display: none; margin: 10px 0; }
+        .spinner { 
+            border: 3px solid #f3f3f3; 
+            border-top: 3px solid #007bff; 
+            border-radius: 50%; 
+            width: 20px; 
+            height: 20px; 
+            animation: spin 1s linear infinite; 
+            display: inline-block;
+            margin-right: 10px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="otpModal">
+        <div id="otpForm">
+            <h1>🔐 OTP Login</h1>
+            <h2>Enter OTP to Access Budget Dashboard</h2>
+            <input type="email" id="emailInput" placeholder="Enter your registered email" required>
+            <input type="text" id="otpInput" placeholder="Enter 6-digit OTP" required maxlength="6" pattern="[0-9]{6}">
+            <button onclick="verifyOTP()" id="verifyBtn">Verify OTP</button>
+            <div class="loading" id="loading">
+                <div class="spinner"></div>Verifying...
+            </div>
+            <div id="error"></div>
+            <div id="success"></div>
+            <p style="color: #666; font-size: 12px; margin-top: 20px;">
+                Contact admin for OTP generation<br>
+                OTP expires in 10 minutes
+            </p>
+        </div>
+    </div>
+    
+    <iframe id="budContent" src="home.html"></iframe>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
+        import { getFirestore, doc, getDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDPeNlcSpTe2oOySKcdfh9ykQzHVTDSwzk",
+            authDomain: "otp-gen-4d684.firebaseapp.com",
+            projectId: "otp-gen-4d684",
+            storageBucket: "otp-gen-4d684.firebasestorage.app",
+            messagingSenderId: "1092826485280",
+            appId: "1:1092826485280:web:1a2b5b38f002a793246245"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // Show loading state
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('verifyBtn').disabled = show;
+        }
+
+        // Show error message
+        function showError(message) {
+            document.getElementById('error').textContent = message;
+            document.getElementById('success').textContent = '';
+        }
+
+        // Show success message
+        function showSuccess(message) {
+            document.getElementById('success').textContent = message;
+            document.getElementById('error').textContent = '';
+        }
+
+        // Clear messages
+        function clearMessages() {
+            document.getElementById('error').textContent = '';
+            document.getElementById('success').textContent = '';
+        }
+
+        window.verifyOTP = async function() {
+            const email = document.getElementById('emailInput').value.trim().toLowerCase();
+            const otp = document.getElementById('otpInput').value.trim();
+
+            clearMessages();
+
+            if (!email || !otp) {
+                showError('Please enter both email and OTP');
+                return;
+            }
+
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                showError('Please enter a valid email address');
+                return;
+            }
+
+            if (!/^\d{6}$/.test(otp)) {
+                showError('OTP must be exactly 6 digits');
+                return;
+            }
+
+            showLoading(true);
+
+            try {
+                // Create document ID from email (replace @ and . with underscores)
+                const docId = email.replace('@', '_').replace(/\./g, '_');
+                const docRef = doc(db, 'otps', docId);
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    
+                    // Check if OTP matches and is still valid (within 10 minutes)
+                    const now = new Date().getTime();
+                    const otpTime = data.timestamp;
+                    const timeDiff = now - otpTime;
+                    
+                    if (timeDiff > 600000) { // 10 minutes = 600,000 milliseconds
+                        showError('OTP has expired. Please request a new one.');
+                        await deleteDoc(docRef); // Delete expired OTP
+                        showLoading(false);
+                        return;
+                    }
+                    
+                    if (data.otp === otp && data.email.toLowerCase() === email) {
+                        showSuccess('OTP verified successfully! Loading dashboard...');
+                        
+                        // Wait a moment to show success message
+                        setTimeout(async () => {
+                            try {
+                                // Delete OTP to prevent reuse
+                                await deleteDoc(docRef);
+                                
+                                // Hide modal and show content
+                                document.getElementById('otpModal').style.display = 'none';
+                                document.getElementById('budContent').style.display = 'block';
+                                
+                                // Store access token in localStorage (permanent access)
+                                localStorage.setItem('budgetAccess', 'granted');
+                                
+                            } catch (deleteError) {
+                                console.error('Error deleting used OTP:', deleteError);
+                                // Still grant access even if deletion fails
+                                document.getElementById('otpModal').style.display = 'none';
+                                document.getElementById('budContent').style.display = 'block';
+                            }
+                        }, 1500);
+                        
+                    } else {
+                        showError('Invalid OTP or email combination');
+                        showLoading(false);
+                    }
+                } else {
+                    showError('Invalid OTP or email. Please check your credentials.');
+                    showLoading(false);
+                }
+            } catch (error) {
+                console.error('Error verifying OTP:', error);
+                showError('Connection error. Please check your internet and try again.');
+                showLoading(false);
+            }
+        };
+
+        // Prevent modal from being closed
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' || e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+                e.preventDefault();
+                return false;
+            }
+        });
+
+        // Prevent right-click context menu
+        document.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+        });
+
+        // Prevent back/forward navigation
+        window.addEventListener('beforeunload', function(e) {
+            if (document.getElementById('otpModal').style.display !== 'none') {
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            }
+        });
+
+        // Check if already authenticated (page refresh handling)
+        window.addEventListener('load', function() {
+            const accessGranted = localStorage.getItem('budgetAccess');
+            
+            if (accessGranted === 'granted') {
+                document.getElementById('otpModal').style.display = 'none';
+                document.getElementById('budContent').style.display = 'block';
+            }
+        });
+
+        // Auto-focus email input
+        document.getElementById('emailInput').focus();
+
+        // Allow Enter key to submit
+        document.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                verifyOTP();
+            }
+        });
+
+        // Real-time OTP input formatting
+        document.getElementById('otpInput').addEventListener('input', function(e) {
+            // Only allow numbers
+            this.value = this.value.replace(/[^0-9]/g, '');
+        });
+
+        // Real-time email validation
+        document.getElementById('emailInput').addEventListener('input', function(e) {
+            clearMessages();
+        });
+
+        console.log('OTP Login System Initialized');
+        console.log('Site URL: https://acceleracio.github.io/Budget/');
+    </script>
+</body>
+</html>
